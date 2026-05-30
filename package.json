@@ -15,17 +15,20 @@
     "typecheck": "tsc --noEmit",
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "vite build && gh-pages -d dist"
   },
   "dependencies": {
     "@domecs/core": "file:../domecs/packages/domecs",
     "@domecs/dom": "file:../domecs/packages/domecs-dom",
     "@domecs/input": "file:../domecs/packages/domecs-input",
     "@domecs/inspector": "file:../domecs/packages/domecs-inspector",
-    "@domecs/persist": "file:../domecs/packages/domecs-persist"
+    "@domecs/persist": "file:../domecs/packages/domecs-persist",
+    "domecs-workspace": "file:../domecs"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
+    "gh-pages": "^6.1.1",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vitest": "^2.1.9"

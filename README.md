@@ -1,4 +1,7 @@
-# raliroad_game
+# Railroad — DOMECS exemplar
+
+**▶ Live demo: https://hypernovasystem.github.io/railroad/**
+
 Railroad tycoon game
 
 ## Features

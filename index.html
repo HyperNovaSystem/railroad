@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Iron Dynasty — a DOMECS railroad sim</title>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <!-- ── Top HUD: ledger + nation mood, refreshed imperatively on tickEnd ── -->
+    <header id="hud">
+      <div class="hud-brand">
+        <strong>IRON&nbsp;DYNASTY</strong>
+        <span id="hud-clock" class="hud-clock">1880 · Jan</span>
+        <span id="hud-era" class="pill">steam</span>
+      </div>
+      <div class="hud-stats">
+        <span class="stat"><label>Cash</label><b id="hud-cash">$0</b></span>
+        <span class="stat"><label>Debt</label><b id="hud-debt">$0</b></span>
+        <span class="stat"><label>Rating</label><b id="hud-rating">A</b></span>
+        <span class="stat"><label>Rev/Exp</label><b id="hud-flow">$0 / $0</b></span>
+        <span class="stat"><label>Rep</label><b id="hud-rep">50</b></span>
+        <span class="stat"><label>Approval</label><b id="hud-approval">50</b></span>
+        <span class="stat"><label>Reg</label><b id="hud-reg">20</b></span>
+        <span class="stat"><label>Dynasty</label><b id="hud-dynasty">Gen 1 · engineer</b></span>
+        <span class="stat"><label>Legacy</label><b id="hud-legacy">0</b></span>
+      </div>
+    </header>
+
+    <!-- ── Time + persistence controls (work while paused) ── -->
+    <div id="controls">
+      <button id="btn-pause" class="ctrl" title="Space">▶ Resume</button>
+      <div class="speed" role="group" aria-label="Speed">
+        <button data-scale="0.5" class="ctrl spd">0.5×</button>
+        <button data-scale="1" class="ctrl spd is-active">1×</button>
+        <button data-scale="2" class="ctrl spd">2×</button>
+        <button data-scale="4" class="ctrl spd">4×</button>
+      </div>
+      <span class="sep"></span>
+      <button id="btn-save" class="ctrl" title="S">⤓ Save</button>
+      <button id="btn-load" class="ctrl" title="L">⤒ Load</button>
+      <button id="btn-build" class="ctrl" title="B">⛏ Build mode: off</button>
+      <span id="status" class="status"></span>
+    </div>
+
+    <main id="stage">
+      <!-- ── The map board. Four @domecs/dom slots, back-to-front. ── -->
+      <section id="board" aria-label="Rail map">
+        <div id="layer-lines" class="layer"></div>
+        <div id="layer-stations" class="layer"></div>
+        <div id="layer-cities" class="layer"></div>
+        <div id="layer-trains" class="layer"></div>
+      </section>
+
+      <!-- ── Right rail: tabbed command panels + live fault stream. ── -->
+      <aside id="panel">
+        <nav id="tabs">
+          <button class="tab is-active" data-tab="build">Build</button>
+          <button class="tab" data-tab="trains">Trains</button>
+          <button class="tab" data-tab="tech">Tech</button>
+          <button class="tab" data-tab="politics">Politics</button>
+          <button class="tab" data-tab="log">Log</button>
+        </nav>
+        <div id="tab-content"></div>
+        <section id="faults">
+          <h3>Service faults <span id="fault-count" class="badge">0</span></h3>
+          <ul id="fault-list"><li class="muted">No faults reported.</li></ul>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

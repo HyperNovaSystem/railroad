@@ -1,0 +1,33 @@
+{
+  "name": "railroad_game",
+  "version": "0.1.0-alpha.0",
+  "private": true,
+  "description": "DOMECS exemplar — Iron Dynasty, a real-time railroad tycoon management sim.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "tsc --noEmit && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@domecs/core": "file:../domecs/packages/domecs",
+    "@domecs/dom": "file:../domecs/packages/domecs-dom",
+    "@domecs/input": "file:../domecs/packages/domecs-input",
+    "@domecs/inspector": "file:../domecs/packages/domecs-inspector",
+    "@domecs/persist": "file:../domecs/packages/domecs-persist"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.9"
+  }
+}

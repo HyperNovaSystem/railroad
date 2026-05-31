@@ -10,6 +10,7 @@
 import {
   Faulted,
   err,
+  isErr,
   normalizeCause,
   ok,
   type DomecsError,
@@ -74,7 +75,7 @@ function warnIf(r: Result<unknown, DomecsError>, label: string): void {
 function createLocalStorage(prefix = 'iron-dynasty:'): Storage {
   const k = (slot: string): string => prefix + slot
   const ioErr = (op: 'save' | 'load', cause: unknown): Result<never, DomecsError> =>
-    err({ kind: 'persist_io', op, cause: normalizeCause(cause) })
+    err({ kind: 'persist_io', op, cause: normalizeCause(cause), retryable: false })
   return {
     read(slot) {
       try {
@@ -127,7 +128,7 @@ function cityXY(cityId: Entity): { x: number; y: number } {
 const linesView = defineView({
   slot: 'lines',
   query: [RailLine],
-  changedOn: [], // paint every frame: entities must render correctly even while paused
+  changedOn: { mode: 'legacy' }, // paint every frame: entities must render correctly even while paused
   create() {
     const d = document.createElement('div')
     d.className = 'rail-line'
@@ -151,7 +152,7 @@ const linesView = defineView({
 const stationsView = defineView({
   slot: 'stations',
   query: [Station],
-  changedOn: [],
+  changedOn: { mode: 'legacy' },
   create() {
     const d = document.createElement('div')
     d.className = 'station'
@@ -182,7 +183,7 @@ const stationsView = defineView({
 const citiesView = defineView({
   slot: 'cities',
   query: [City],
-  changedOn: [],
+  changedOn: { mode: 'legacy' },
   create(e) {
     const d = document.createElement('div')
     d.className = 'city'
@@ -208,7 +209,7 @@ const citiesView = defineView({
 const trainsView = defineView({
   slot: 'trains',
   query: [Train],
-  changedOn: [], // redraw every frame so motion is smooth and works while paused
+  changedOn: { mode: 'legacy' }, // redraw every frame so motion is smooth and works while paused
   create() {
     const d = document.createElement('div')
     d.className = 'train'
@@ -238,7 +239,7 @@ const trainsView = defineView({
   },
 })
 
-const mount = mountDOM(world, {
+const mountResult = mountDOM(world, {
   slots: {
     lines: $('layer-lines'),
     stations: $('layer-stations'),
@@ -247,6 +248,15 @@ const mount = mountDOM(world, {
   },
   views: [linesView, stationsView, citiesView, trainsView],
 })
+if (isErr(mountResult)) {
+  const e = mountResult.error
+  const detail =
+    e.kind === 'plugin_install_failed'
+      ? `${e.kind}: ${e.reason}`
+      : `${e.kind}: ${e.slot}`
+  throw new Error(`Iron Dynasty: failed to mount DOM views — ${detail}`)
+}
+const mount = mountResult.value
 void mount // retained for the lifetime of the page
 
 // ── Naming helpers ───────────────────────────────────────────────────────────
@@ -705,7 +715,7 @@ world.signals.tickEnd.subscribe(() => {
 })
 
 // ── Go ───────────────────────────────────────────────────────────────────────
-world.start()
+world.startLoop()
 world.setScale(0) // start paused
 renderPanel()
 refreshHud()

@@ -7,19 +7,11 @@
 // Everything outside the board (HUD, command panels) is imperative DOM, driven
 // off world.signals.tickEnd and refreshed after each dispatched Command.
 
-import {
-  Faulted,
-  err,
-  normalizeCause,
-  ok,
-  type DomecsError,
-  type Entity,
-  type Result,
-} from '@domecs/core'
+import { Faulted, type DomecsError, type Entity, type Result } from '@domecs/core'
 import { defineView, mountDOM } from '@domecs/dom'
 import { createInputPlugin } from '@domecs/input'
 import { createInspector, type InspectorEntry } from '@domecs/inspector'
-import { load, save, type Storage } from '@domecs/persist'
+import { createLocalStorageStorage, load, save } from '@domecs/persist'
 import {
   City,
   GRADE_ORDER,
@@ -33,6 +25,7 @@ import {
   createRailroad,
   effectiveSpeedKm,
   gradeRank,
+  lineMaintainCost,
   trainModel,
   type Command,
   type Good,
@@ -69,52 +62,10 @@ function warnIf(r: Result<unknown, DomecsError>, label: string): void {
   if (!r.ok) console.warn(`Iron Dynasty: ${label} plugin failed to install:`, r.error)
 }
 
-// ── @domecs/persist — localStorage-backed Storage adapter ───────────────────
-// persist ships only createMemoryStorage(); a browser-durable adapter is left
-// to the app. Each op catches at the I/O boundary and returns persist_io.
-function createLocalStorage(prefix = 'iron-dynasty:'): Storage {
-  const k = (slot: string): string => prefix + slot
-  const ioErr = (op: 'save' | 'load', cause: unknown): Result<never, DomecsError> =>
-    err({ kind: 'persist_io', op, cause: normalizeCause(cause), retryable: true })
-  return {
-    read(slot) {
-      try {
-        return ok(localStorage.getItem(k(slot)))
-      } catch (cause) {
-        return ioErr('load', cause)
-      }
-    },
-    write(slot, data) {
-      try {
-        localStorage.setItem(k(slot), data)
-        return ok(undefined)
-      } catch (cause) {
-        return ioErr('save', cause)
-      }
-    },
-    remove(slot) {
-      try {
-        localStorage.removeItem(k(slot))
-        return ok(undefined)
-      } catch (cause) {
-        return ioErr('save', cause)
-      }
-    },
-    list() {
-      try {
-        const out: string[] = []
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i)
-          if (key && key.startsWith(prefix)) out.push(key.slice(prefix.length))
-        }
-        return ok(out.sort())
-      } catch (cause) {
-        return ioErr('load', cause)
-      }
-    },
-  }
-}
-const storage = createLocalStorage()
+// ── @domecs/persist — browser-durable storage ────────────────────────────────
+// The engine adapter namespaces slots and maps quota/privacy-mode throws to
+// persist_io Results.
+const storage = createLocalStorageStorage('iron-dynasty:')
 
 // ── Map board views (@domecs/dom) ────────────────────────────────────────────
 let buildMode = false
@@ -286,6 +237,8 @@ function describe(cmd: Command): string {
       return `Upgraded a station.`
     case 'upgrade-line':
       return `Upgraded line to ${cmd.grade}.`
+    case 'maintain-line':
+      return `Overhauled ${lineLabel(cmd.line)}.`
     case 'set-fares':
       return `Set fares ×${cmd.fareMult.toFixed(2)} / freight ×${cmd.freightMult.toFixed(2)}.`
     case 'enact-policy':
@@ -353,6 +306,20 @@ function doLoad(): void {
   refreshAll()
 }
 
+// ── Undo / redo (exercises @domecs/persist createSnapshotHistory) ───────────
+// A checkpoint is pushed after every accepted command, so undo rewinds to
+// just before the last action — including any months simulated since.
+function doUndo(): void {
+  if (REFS.history.undo()) setStatus('Rewound to before the last action.', 'ok')
+  else setStatus('Nothing to undo.', 'err')
+  refreshAll()
+}
+function doRedo(): void {
+  if (REFS.history.redo()) setStatus('Replayed the next action.', 'ok')
+  else setStatus('Nothing to redo.', 'err')
+  refreshAll()
+}
+
 // ── HUD + fault panel refresh ────────────────────────────────────────────────
 function refreshHud(): void {
   const t = REFS.treasury()
@@ -367,6 +334,8 @@ function refreshHud(): void {
   $('hud-reg').textContent = String(Math.round(t.regulation))
   $('hud-dynasty').textContent = `Gen ${t.generation} · ${t.heirTrait}`
   $('hud-legacy').textContent = String(Math.round(t.legacyScore))
+  ;($('btn-undo') as HTMLButtonElement).disabled = !REFS.history.canUndo()
+  ;($('btn-redo') as HTMLButtonElement).disabled = !REFS.history.canRedo()
   if (t.status !== 'playing') {
     $('hud-clock').textContent += t.status === 'bankrupt' ? ' · BANKRUPT' : ' · RETIRED'
   }
@@ -467,18 +436,38 @@ function renderBuild(host: HTMLElement): void {
         .join('')}</select>
       <button class="btn sm" id="p-station-up" ${stations.length ? '' : 'disabled'}>Upgrade</button>
     </div>
-    <h3>Upgrade line</h3>
+    <h3>Lines</h3>
+    <p class="hint">Track wears 0.4%/month and worn track slows trains (down to half speed at 0%).</p>
     <div class="row">
       <select id="p-line">${lines
-        .map((id) => `<option value="${id}">${lineLabel(id)} (${world.getComponent(id, RailLine)?.grade})</option>`)
+        .map((id) => {
+          const ln = world.getComponent(id, RailLine)
+          return `<option value="${id}">${lineLabel(id)} (${ln?.grade}, ${Math.round(
+            ln?.condition ?? 100,
+          )}%)</option>`
+        })
         .join('')}</select>
     </div>
     <div class="row">
       <select id="p-grade">${grades.map((g) => `<option value="${g}">${g}</option>`).join('')}</select>
       <button class="btn sm" id="p-line-up" ${lines.length ? '' : 'disabled'}>Upgrade grade</button>
+      <button class="btn sm ghost" id="p-line-fix" ${lines.length ? '' : 'disabled'}></button>
     </div>`
 
   $('p-build-toggle').addEventListener('click', () => setBuildMode(!buildMode))
+  const fixLabel = (): void => {
+    const ln = world.getComponent(Number(selVal('p-line')) as Entity, RailLine)
+    const cost = ln ? lineMaintainCost(ln.length, ln.condition) : 0
+    $('p-line-fix').textContent = cost > 0 ? `Maintain (${fmtMoney(cost)})` : 'Maintain'
+  }
+  if (lines.length) {
+    fixLabel()
+    $('p-line').addEventListener('change', fixLabel)
+    $('p-line-fix').addEventListener('click', () => {
+      const line = Number(selVal('p-line'))
+      if (Number.isFinite(line)) dispatch({ kind: 'maintain-line', line })
+    })
+  }
   $('p-station-up').addEventListener('click', () => {
     const station = Number(selVal('p-station'))
     if (Number.isFinite(station)) dispatch({ kind: 'upgrade-station', station })
@@ -741,6 +730,8 @@ function refreshAll(): void {
 $('btn-pause').addEventListener('click', () => setPaused(!paused))
 $('btn-save').addEventListener('click', doSave)
 $('btn-load').addEventListener('click', doLoad)
+$('btn-undo').addEventListener('click', doUndo)
+$('btn-redo').addEventListener('click', doRedo)
 $('btn-build').addEventListener('click', () => setBuildMode(!buildMode))
 $('btn-tutorial').addEventListener('click', () => setTutorialOpen(!tutorialOpen))
 for (const b of document.querySelectorAll<HTMLElement>('.spd'))
@@ -765,6 +756,8 @@ world.signals.tickStart.subscribe(() => {
   if (pressed.has('KeyS')) doSave()
   if (pressed.has('KeyL')) doLoad()
   if (pressed.has('KeyT')) setTutorialOpen(!tutorialOpen)
+  if (pressed.has('KeyZ')) doUndo()
+  if (pressed.has('KeyY')) doRedo()
   if (pressed.has('Escape') && buildOrigin !== null) {
     markOrigin(buildOrigin, false)
     buildOrigin = null

@@ -3,13 +3,16 @@ import { Faulted, type Entity } from '@domecs/core'
 import { createMemoryStorage, load, save } from '@domecs/persist'
 import {
   City,
+  ECONOMY,
   RailLine,
   Station,
   TechNode,
   Train,
+  conditionSpeedFactor,
   createRailroad,
   creditTierFor,
   effectiveSpeedKm,
+  lineMaintainCost,
   recomputeTechMods,
   snapshotHash,
   type RailroadRefs,
@@ -250,6 +253,70 @@ describe('errors-as-data: station overload surfaces a Faulted', () => {
       return st !== undefined && st.paxQueue >= st.capacity
     })
     expect(saturated).toBe(true)
+  })
+})
+
+describe('track condition and maintenance', () => {
+  it('worn track slows trains; maintain-line restores it for a fee', () => {
+    const r = fresh()
+    const { line } = connect(r, 'ashford', 'brightwater')
+    r.advanceMonths(12) // 0.4/month decay
+    const worn = r.world.getComponent(line, RailLine)!
+    expect(worn.condition).toBeLessThan(100)
+    const cost = lineMaintainCost(worn.length, worn.condition)
+    expect(cost).toBeGreaterThan(0)
+    const cashBefore = r.treasury().cash
+    expect(r.command({ kind: 'maintain-line', line })).toBe(true)
+    expect(r.world.getComponent(line, RailLine)!.condition).toBe(100)
+    expect(r.treasury().cash).toBe(cashBefore - cost)
+    // a pristine line has nothing to maintain
+    expect(r.command({ kind: 'maintain-line', line })).toBe(false)
+    expect(r.treasury().lastError).toMatch(/perfect condition/)
+  })
+
+  it('scales speed linearly from 1.0 (pristine) to 0.5 (worn out)', () => {
+    expect(conditionSpeedFactor(100)).toBe(1)
+    expect(conditionSpeedFactor(50)).toBe(0.75)
+    expect(conditionSpeedFactor(0)).toBe(0.5)
+    expect(conditionSpeedFactor(-10)).toBe(0.5) // clamped
+  })
+})
+
+describe('cargo configuration matters', () => {
+  function everLoadedFreight(r: RailroadRefs, train: Entity, months: number): boolean {
+    for (let i = 0; i < months; i++) {
+      r.advanceMonths(1)
+      const tr = r.world.getComponent(train, Train)
+      if (tr && tr.loadFreight > 0) return true
+    }
+    return false
+  }
+
+  it('loads freight only when the station good matches the train cargo', () => {
+    const r = fresh({ startCash: 500_000 })
+    const { line } = connect(r, 'ashford', 'coalridge') // coalridge produces coal
+    r.command({ kind: 'buy-train', model: 'mule', line, cargo: 'coal' })
+    r.command({ kind: 'buy-train', model: 'mule', line, cargo: 'mail' })
+    const [coalTrain, mailTrain] = r.trainIds() as [Entity, Entity]
+    expect(everLoadedFreight(r, coalTrain, 24)).toBe(true)
+    expect(everLoadedFreight(r, mailTrain, 24)).toBe(false) // nothing ships mail here
+    // the configured cargo is the player's choice; arrivals don't overwrite it
+    expect(r.world.getComponent(coalTrain, Train)?.cargo).toBe('coal')
+    expect(r.world.getComponent(mailTrain, Train)?.cargo).toBe('mail')
+  })
+})
+
+describe('retirement', () => {
+  it('retires the dynasty once the legacy goal is reached', () => {
+    const r = fresh()
+    r.treasury().legacyScore = ECONOMY.retirementLegacy // live, mutable resource
+    r.advanceMonths(1)
+    expect(r.treasury().status).toBe('retired')
+    expect(r.treasury().eventLog.some((e) => /retires in glory/.test(e))).toBe(true)
+    // a retired dynasty accepts no further commands
+    const a = r.cityByKey.get('ashford') as Entity
+    const b = r.cityByKey.get('brightwater') as Entity
+    expect(r.command({ kind: 'build-line', from: a, to: b })).toBe(false)
   })
 })
 

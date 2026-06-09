@@ -43,12 +43,14 @@ import {
   trainModel,
 } from './data.js'
 import {
+  conditionSpeedFactor,
   creditTierFor,
   deliveryRevenue,
   distanceKm,
   effectiveMaxTrains,
   effectiveSpeedKm,
   lineBuildCost,
+  lineMaintainCost,
   recomputeTechMods,
   trainCapacity,
 } from './economy.js'
@@ -352,7 +354,9 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
         tr.dir = atFrom ? 1 : -1
       }
       const length = Math.max(ln.length, 1)
-      tr.position = clamp(tr.position + tr.dir * (tr.speedKm / length), 0, 1)
+      // worn track slows traffic; see conditionSpeedFactor (0.5..1)
+      const speed = tr.speedKm * conditionSpeedFactor(ln.condition)
+      tr.position = clamp(tr.position + tr.dir * (speed / length), 0, 1)
       world.markChanged(id, Train)
     }
     if (banked > 0) {
@@ -374,13 +378,17 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     }
     const station = world.getComponent(stationId, Station)
     if (station) {
+      // passengers are the universal good — every train carries them
       const pax = Math.min(tr.capacityPax, station.paxQueue)
       station.paxQueue -= pax
       tr.loadPax = pax
-      const freight = Math.min(tr.capacityFreight, station.freightQueue)
-      station.freightQueue -= freight
-      tr.loadFreight = freight
-      tr.cargo = station.good
+      // freight loads only when the station's good matches what this train
+      // is configured to haul, so the cargo choice at purchase matters
+      if (station.good === tr.cargo) {
+        const freight = Math.min(tr.capacityFreight, station.freightQueue)
+        station.freightQueue -= freight
+        tr.loadFreight = freight
+      }
       world.markChanged(stationId, Station)
     }
     void id
@@ -408,6 +416,9 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     if (s.cash < ECONOMY.bankruptcyFloor) {
       s.status = 'bankrupt'
       log(`The dynasty fell into bankruptcy in ${s.year}.`)
+    } else if (s.legacyScore >= ECONOMY.retirementLegacy) {
+      s.status = 'retired'
+      log(`With its legacy secured, the dynasty retires in glory (${s.year}).`)
     }
     world.markResourceChanged(Treasury)
   })
@@ -591,6 +602,8 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
         return upgradeStation(cmd.station)
       case 'upgrade-line':
         return upgradeLine(cmd.line, cmd.grade)
+      case 'maintain-line':
+        return maintainLine(cmd.line)
       case 'set-fares':
         return setFares(cmd.fareMult, cmd.freightMult)
       case 'enact-policy':
@@ -780,6 +793,22 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
       }
     }
     log(`Upgraded a line to ${grade} grade.`)
+    world.markResourceChanged(Treasury)
+    return true
+  }
+
+  function maintainLine(line: Entity): boolean {
+    const ln = world.getComponent(line, RailLine)
+    if (!ln) return reject('unknown line')
+    if (ln.condition >= 100) return reject('line is already in perfect condition')
+    const cost = lineMaintainCost(ln.length, ln.condition)
+    const s = t()
+    if (s.cash < cost) return reject(`insufficient funds: need $${cost}`)
+    s.cash -= cost
+    s.totalExpenses += cost
+    ln.condition = 100
+    world.markChanged(line, RailLine)
+    log(`Overhauled a line back to full condition ($${cost}).`)
     world.markResourceChanged(Treasury)
     return true
   }

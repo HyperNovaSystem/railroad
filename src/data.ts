@@ -54,8 +54,10 @@ export const ECONOMY = Object.freeze({
   bankruptcyFloor: -50_000, // cash below this with debt ⇒ bankrupt
   conditionDecayPerMonth: 0.4, // line wear
   maintenancePerKm: 1.2, // $/km/month track upkeep
+  maintainPerKmFull: 30, // $/km to restore a line from condition 0 to 100
   researchPerMonthBase: 12,
   legacyPerYear: 4, // legacy score accrual baseline
+  retirementLegacy: 750, // legacy score at which the dynasty retires in glory
 })
 
 /** Cost multiplier to *build* a line at a non-standard grade. */

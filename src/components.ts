@@ -412,6 +412,7 @@ export type Command =
   | { kind: 'repay-loan'; amount: number }
   | { kind: 'upgrade-station'; station: Entity }
   | { kind: 'upgrade-line'; line: Entity; grade: Grade }
+  | { kind: 'maintain-line'; line: Entity }
   | { kind: 'set-fares'; fareMult: number; freightMult: number }
   | { kind: 'enact-policy'; policy: PolicyId }
 

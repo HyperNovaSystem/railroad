@@ -40,6 +40,7 @@ import {
   type PolicyId,
   type TechId,
   type TrainModelId,
+  tutorialProgress,
 } from './index.js'
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -74,7 +75,7 @@ function warnIf(r: Result<unknown, DomecsError>, label: string): void {
 function createLocalStorage(prefix = 'iron-dynasty:'): Storage {
   const k = (slot: string): string => prefix + slot
   const ioErr = (op: 'save' | 'load', cause: unknown): Result<never, DomecsError> =>
-    err({ kind: 'persist_io', op, cause: normalizeCause(cause) })
+    err({ kind: 'persist_io', op, cause: normalizeCause(cause), retryable: true })
   return {
     read(slot) {
       try {
@@ -127,7 +128,7 @@ function cityXY(cityId: Entity): { x: number; y: number } {
 const linesView = defineView({
   slot: 'lines',
   query: [RailLine],
-  changedOn: [], // paint every frame: entities must render correctly even while paused
+  changedOn: { mode: 'legacy' }, // paint every frame: entities must render correctly even while paused
   create() {
     const d = document.createElement('div')
     d.className = 'rail-line'
@@ -151,7 +152,7 @@ const linesView = defineView({
 const stationsView = defineView({
   slot: 'stations',
   query: [Station],
-  changedOn: [],
+  changedOn: { mode: 'legacy' },
   create() {
     const d = document.createElement('div')
     d.className = 'station'
@@ -182,7 +183,7 @@ const stationsView = defineView({
 const citiesView = defineView({
   slot: 'cities',
   query: [City],
-  changedOn: [],
+  changedOn: { mode: 'legacy' },
   create(e) {
     const d = document.createElement('div')
     d.className = 'city'
@@ -208,7 +209,7 @@ const citiesView = defineView({
 const trainsView = defineView({
   slot: 'trains',
   query: [Train],
-  changedOn: [], // redraw every frame so motion is smooth and works while paused
+  changedOn: { mode: 'legacy' }, // redraw every frame so motion is smooth and works while paused
   create() {
     const d = document.createElement('div')
     d.className = 'train'
@@ -247,7 +248,8 @@ const mount = mountDOM(world, {
   },
   views: [linesView, stationsView, citiesView, trainsView],
 })
-void mount // retained for the lifetime of the page
+// mountDOM returns a Result; the handle lives for the lifetime of the page.
+if (!mount.ok) console.warn('Iron Dynasty: board mount failed:', mount.error)
 
 // ── Naming helpers ───────────────────────────────────────────────────────────
 function cityName(id: Entity): string {
@@ -406,17 +408,38 @@ for (const tab of document.querySelectorAll<HTMLElement>('.tab')) {
 
 function renderPanel(): void {
   const host = $('tab-content')
+  // Re-renders rebuild innerHTML wholesale; carry over in-progress <select>
+  // and <input> choices so the periodic repaint doesn't clobber a half-made
+  // selection (e.g. picking a model while the clock runs).
+  const kept = new Map<string, string>()
+  for (const el of host.querySelectorAll<HTMLSelectElement | HTMLInputElement>(
+    'select[id], input[id]',
+  ))
+    kept.set(el.id, el.value)
   switch (activeTab) {
     case 'build':
-      return renderBuild(host)
+      renderBuild(host)
+      break
     case 'trains':
-      return renderTrains(host)
+      renderTrains(host)
+      break
     case 'tech':
-      return renderTech(host)
+      renderTech(host)
+      break
     case 'politics':
-      return renderPolitics(host)
+      renderPolitics(host)
+      break
     case 'log':
-      return renderLog(host)
+      renderLog(host)
+      break
+  }
+  for (const [id, value] of kept) {
+    const el = document.getElementById(id)
+    if (el instanceof HTMLSelectElement) {
+      if ([...el.options].some((o) => o.value === value)) el.value = value
+    } else if (el instanceof HTMLInputElement) {
+      el.value = value
+    }
   }
 }
 
@@ -621,6 +644,62 @@ function renderLog(host: HTMLElement): void {
   }</div>`
 }
 
+// ── Tutorial mode ────────────────────────────────────────────────────────────
+// A state-driven checklist overlaid on the board. Step predicates live in
+// tutorial.ts (pure, headless-tested); this block only paints and handles
+// visibility. Shown on first visit; dismissal sticks via localStorage.
+const TUTORIAL_KEY = 'iron-dynasty:tutorial-dismissed'
+let tutorialOpen = ((): boolean => {
+  try {
+    return localStorage.getItem(TUTORIAL_KEY) === null
+  } catch {
+    return true
+  }
+})()
+function setTutorialDismissed(dismissed: boolean): void {
+  try {
+    if (dismissed) localStorage.setItem(TUTORIAL_KEY, '1')
+    else localStorage.removeItem(TUTORIAL_KEY)
+  } catch {
+    /* private mode: visibility just won't persist */
+  }
+}
+let lastTutorialHtml = ''
+function renderTutorial(): void {
+  const host = $('tutorial')
+  host.hidden = !tutorialOpen
+  if (!tutorialOpen) return
+  const p = tutorialProgress(REFS)
+  const rows = p.steps
+    .map(({ step, done }, i) => {
+      const cls = done ? 'done' : i === p.current ? 'current' : 'todo'
+      const mark = done ? '✓' : i === p.current ? '▸' : '○'
+      const how = i === p.current ? `<div class="tut-how">${escapeHtml(step.how)}</div>` : ''
+      return `<li class="${cls}"><span class="mark">${mark}</span>${escapeHtml(step.title)}${how}</li>`
+    })
+    .join('')
+  const foot = p.complete
+    ? '<p class="tut-done">Tutorial complete — the dynasty is yours.</p>'
+    : ''
+  const html = `<div class="tut-head"><h3>Getting started</h3>
+      <button class="tut-x" data-tut-action="close" title="Hide tutorial">×</button></div>
+    <ol class="tut-steps">${rows}</ol>${foot}`
+  if (html !== lastTutorialHtml) {
+    host.innerHTML = html
+    lastTutorialHtml = html
+  }
+}
+// Delegated click handling survives the innerHTML repaints above.
+$('tutorial').addEventListener('click', (ev) => {
+  if (!(ev.target as HTMLElement).closest('[data-tut-action]')) return
+  setTutorialOpen(false)
+})
+function setTutorialOpen(open: boolean): void {
+  tutorialOpen = open
+  setTutorialDismissed(!open)
+  renderTutorial()
+}
+
 // ── Small utilities ──────────────────────────────────────────────────────────
 function setBuildMode(on: boolean): void {
   buildMode = on
@@ -654,6 +733,7 @@ function refreshAll(): void {
   refreshHud()
   refreshFaults()
   renderPanel()
+  renderTutorial()
   lastPanelPaint = world.time.tick
 }
 
@@ -662,6 +742,7 @@ $('btn-pause').addEventListener('click', () => setPaused(!paused))
 $('btn-save').addEventListener('click', doSave)
 $('btn-load').addEventListener('click', doLoad)
 $('btn-build').addEventListener('click', () => setBuildMode(!buildMode))
+$('btn-tutorial').addEventListener('click', () => setTutorialOpen(!tutorialOpen))
 for (const b of document.querySelectorAll<HTMLElement>('.spd'))
   b.addEventListener('click', () => setSpeed(Number(b.dataset.scale)))
 
@@ -670,10 +751,20 @@ for (const b of document.querySelectorAll<HTMLElement>('.spd'))
 world.signals.tickStart.subscribe(() => {
   const pressed = world.input.keyDelta.pressed
   if (pressed.size === 0) return
+  // Don't steal keys while the player is typing in a form control
+  // (e.g. digits in the loan-amount field would change the game speed).
+  const focus = document.activeElement
+  if (
+    focus instanceof HTMLInputElement ||
+    focus instanceof HTMLSelectElement ||
+    focus instanceof HTMLTextAreaElement
+  )
+    return
   if (pressed.has('Space')) setPaused(!paused)
   if (pressed.has('KeyB')) setBuildMode(!buildMode)
   if (pressed.has('KeyS')) doSave()
   if (pressed.has('KeyL')) doLoad()
+  if (pressed.has('KeyT')) setTutorialOpen(!tutorialOpen)
   if (pressed.has('Escape') && buildOrigin !== null) {
     markOrigin(buildOrigin, false)
     buildOrigin = null
@@ -698,6 +789,7 @@ function bumpSpeed(dir: number): void {
 world.signals.tickEnd.subscribe(() => {
   refreshHud()
   refreshFaults()
+  renderTutorial() // diffed against the last paint; no-op unless a step flips
   if (activeTab !== 'politics' && world.time.tick - lastPanelPaint >= 20) {
     renderPanel()
     lastPanelPaint = world.time.tick
@@ -705,9 +797,10 @@ world.signals.tickEnd.subscribe(() => {
 })
 
 // ── Go ───────────────────────────────────────────────────────────────────────
-world.start()
+world.startLoop()
 world.setScale(0) // start paused
 renderPanel()
 refreshHud()
 refreshFaults()
+renderTutorial()
 setStatus('Welcome to Iron Dynasty. Build a line (B), buy a train, then Resume.')

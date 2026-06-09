@@ -13,3 +13,10 @@ export {
   type RailroadRefs,
   type RailroadFault,
 } from './railroad.js'
+export {
+  TUTORIAL_STEPS,
+  tutorialProgress,
+  type TutorialProgress,
+  type TutorialStep,
+  type TutorialStepId,
+} from './tutorial.js'

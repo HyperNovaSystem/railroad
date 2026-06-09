@@ -4,8 +4,8 @@
 // and tests. One fixed step == one sim-month; 12 months == one year.
 
 import {
-  Changed,
-  ChangedResource,
+  OnChanged,
+  OnChangedResource,
   createWorld,
   entry,
   Faulted,
@@ -183,11 +183,10 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     techByTech.set(t.id, id)
   }
 
-  const stationByCity = new Map<Entity, Entity>()
   let trainSeq = 0
 
   // ── Helpers ──────────────────────────────────────────────────────────
-  const t = (): TreasuryState => world.resource(Treasury) as TreasuryState
+  const t = (): TreasuryState => world.getResource(Treasury) as TreasuryState
 
   function log(message: string): void {
     const s = t()
@@ -201,15 +200,23 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     return false
   }
 
+  // Derived from world state (not a closure cache) so it stays correct after
+  // a persist load/snapshot restore replaces every entity in the world.
+  function stationFor(city: Entity): Entity | null {
+    for (const { id, value } of world.iterEntitiesWith(Station)) {
+      if (value.city === city) return id
+    }
+    return null
+  }
+
   function ensureStation(city: Entity): Entity {
-    const existing = stationByCity.get(city)
-    if (existing !== undefined) return existing
+    const existing = stationFor(city)
+    if (existing !== null) return existing
     const cityState = world.getComponent(city, City)
     const good = dominantGood(city)
     const id = world.spawn([
       entry(Station, Station.create({ city, level: 1, capacity: 200, good })),
     ])
-    stationByCity.set(city, id)
     if (cityState) {
       cityState.hasStation = true
       world.markChanged(city, City)
@@ -218,7 +225,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   }
 
   function dominantGood(city: Entity): Good {
-    for (const { value } of world.entitiesWith(Industry)) {
+    for (const { value } of world.iterEntitiesWith(Industry)) {
       if (value.city === city) return value.good
     }
     return 'goods'
@@ -233,7 +240,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   }
 
   function lineBetween(a: Entity, b: Entity): Entity | null {
-    for (const { id, value } of world.entitiesWith(RailLine)) {
+    for (const { id, value } of world.iterEntitiesWith(RailLine)) {
       if ((value.from === a && value.to === b) || (value.from === b && value.to === a)) return id
     }
     return null
@@ -269,10 +276,10 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   world.system('cities', { schedule: 'fixed', priority: 1 }, () => {
     const s = t()
     if (s.status !== 'playing') return
-    for (const { id, value: city } of world.entitiesWith(City)) {
+    for (const { id, value: city } of world.iterEntitiesWith(City)) {
       if (!city.hasStation) continue
-      const stationId = stationByCity.get(id)
-      if (stationId === undefined) continue
+      const stationId = stationFor(id)
+      if (stationId === null) continue
       const station = world.getComponent(stationId, Station)
       if (!station) continue
       // population growth
@@ -296,10 +303,10 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   world.system('industry', { schedule: 'fixed', priority: 2 }, () => {
     const s = t()
     if (s.status !== 'playing') return
-    for (const { id, value: ind } of world.entitiesWith(Industry)) {
+    for (const { id, value: ind } of world.iterEntitiesWith(Industry)) {
       ind.stockpile = Math.min(ind.stockCap, ind.stockpile + ind.rate)
-      const stationId = stationByCity.get(ind.city)
-      if (stationId !== undefined) {
+      const stationId = stationFor(ind.city)
+      if (stationId !== null) {
         const station = world.getComponent(stationId, Station)
         if (station) {
           const headroom = Math.max(0, station.capacity - station.freightQueue)
@@ -321,7 +328,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     const s = t()
     if (s.status !== 'playing') return
     let banked = 0
-    for (const { id, value: tr } of world.entitiesWith(Train)) {
+    for (const { id, value: tr } of world.iterEntitiesWith(Train)) {
       if (tr.line === null) {
         if (tr.status !== 'idle') {
           tr.status = 'idle'
@@ -386,10 +393,10 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     if (s.status !== 'playing') return
     const interest = Math.round((s.debt * s.interestRate) / 12)
     let maintenance = 0
-    for (const { value: tr } of world.entitiesWith(Train)) {
+    for (const { value: tr } of world.iterEntitiesWith(Train)) {
       maintenance += tr.maintenance * s.maintenanceMult
     }
-    for (const { id, value: ln } of world.entitiesWith(RailLine)) {
+    for (const { id, value: ln } of world.iterEntitiesWith(RailLine)) {
       maintenance += ln.length * ECONOMY.maintenancePerKm
       ln.condition = clamp(ln.condition - ECONOMY.conditionDecayPerMonth, 0, 100)
       world.markChanged(id, RailLine)
@@ -435,7 +442,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     const s = t()
     if (s.status !== 'playing') return
     if (s.month !== 1 || s.year <= s.foundingYear) return
-    const roll = world.rand.roll(100) // 1..100, seeded
+    const roll = world.rand.uniformRoll(100) // 1..100, seeded
     if (s.reputation < 40 || roll <= s.regulation) {
       s.regulation = clamp(s.regulation + 5, 0, 100)
       s.approval = clamp(s.approval - 4, 0, 100)
@@ -478,7 +485,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     { schedule: 'fixed', priority: 8 },
     (): SystemResult<RailroadFault> => {
       const errors: SystemFault<RailroadFault>[] = []
-      for (const { id, value: station } of world.entitiesWith(Station)) {
+      for (const { id, value: station } of world.iterEntitiesWith(Station)) {
         const saturated = station.paxQueue >= station.capacity
         const faulted = world.getComponent(id, Faulted)
         const already = faulted?.faults.some((f) => f.kind === 'railroad/station-overloaded') ?? false
@@ -504,7 +511,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   })
 
   // 'reactive' tech-unlock — fold researched tech into Treasury modifiers.
-  world.system('tech-unlock', { schedule: 'reactive', reactsTo: Changed(TechNode) }, () => {
+  world.system('tech-unlock', { schedule: 'reactive', reactsTo: OnChanged(TechNode) }, () => {
     const states = techIds
       .map((id) => world.getComponent(id, TechNode))
       .filter((n): n is NonNullable<typeof n> => n !== undefined)
@@ -517,7 +524,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     s.unlockedModels = mods.unlockedModels
     s.maxGrade = mods.maxGrade
     // existing rolling stock benefits immediately
-    for (const { id, value: tr } of world.entitiesWith(Train)) {
+    for (const { id, value: tr } of world.iterEntitiesWith(Train)) {
       applyTrainPerf(tr, gradeOfLine(tr.line))
       world.markChanged(id, Train)
     }
@@ -528,7 +535,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   // re-marks the resource, so it converges and cannot loop.
   world.system(
     'credit-rating',
-    { schedule: 'reactive', reactsTo: ChangedResource(Treasury) },
+    { schedule: 'reactive', reactsTo: OnChangedResource(Treasury) },
     () => {
       const s = t()
       const { rating, rate } = creditTierFor(s.debt, s.cash)
@@ -539,7 +546,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
 
   // 'tick' render — transient per-train screen state (excluded from snapshots).
   world.system('render', { schedule: 'tick' }, () => {
-    for (const { id, value: tr } of world.entitiesWith(Train)) {
+    for (const { id, value: tr } of world.iterEntitiesWith(Train)) {
       if (tr.line === null) continue
       const ln = world.getComponent(tr.line, RailLine)
       if (!ln) continue
@@ -598,7 +605,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     if (!a || !b) return reject('unknown city')
     if (lineBetween(from, to) !== null) return reject('these cities are already connected')
     const length = distanceKm(a.x, a.y, b.x, b.y)
-    const stationsToBuild = (stationByCity.has(from) ? 0 : 1) + (stationByCity.has(to) ? 0 : 1)
+    const stationsToBuild = (stationFor(from) !== null ? 0 : 1) + (stationFor(to) !== null ? 0 : 1)
     const cost = lineBuildCost(length, 'standard', stationsToBuild)
     const s = t()
     if (s.cash < cost) return reject(`insufficient funds: need $${cost}`)
@@ -643,7 +650,9 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     if (s.cash < cost) return reject(`insufficient funds: need $${cost}`)
     s.cash -= cost
     s.totalExpenses += cost
-    trainSeq += 1
+    // Seed the name sequence from the live fleet size so numbering continues
+    // (rather than restarting at #1) after a save is loaded into a fresh boot.
+    trainSeq = Math.max(trainSeq, [...world.iterEntitiesWith(Train)].length) + 1
     const train = Train.create({
       name: name ?? `${trainModel(model).name} #${trainSeq}`,
       model,
@@ -714,8 +723,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
   function takeLoan(amount: number): boolean {
     if (!(amount > 0)) return reject('loan amount must be positive')
     const s = t()
-    const ceiling = 500_000
-    if (s.debt + amount > ceiling) return reject('credit limit reached')
+    if (s.debt + amount > ECONOMY.loanCeiling) return reject('credit limit reached')
     s.cash += amount
     s.debt += amount
     log(`Borrowed $${amount}.`)
@@ -765,7 +773,7 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
     ln.grade = grade
     ln.condition = 100
     world.markChanged(line, RailLine)
-    for (const { id, value: tr } of world.entitiesWith(Train)) {
+    for (const { id, value: tr } of world.iterEntitiesWith(Train)) {
       if (tr.line === line) {
         applyTrainPerf(tr, grade)
         world.markChanged(id, Train)
@@ -825,10 +833,10 @@ export function createRailroad(options: RailroadOptions = {}): RailroadRefs {
       world.stepN(Math.max(0, Math.trunc(n)), 1)
     },
     lineBetween,
-    stationAt: (city) => stationByCity.get(city) ?? null,
-    trainIds: () => [...world.entitiesWith(Train)].map((e) => e.id),
-    lineIds: () => [...world.entitiesWith(RailLine)].map((e) => e.id),
-    stationIds: () => [...world.entitiesWith(Station)].map((e) => e.id),
+    stationAt: (city) => stationFor(city),
+    trainIds: () => [...world.iterEntitiesWith(Train)].map((e) => e.id),
+    lineIds: () => [...world.iterEntitiesWith(RailLine)].map((e) => e.id),
+    stationIds: () => [...world.iterEntitiesWith(Station)].map((e) => e.id),
   }
   return refs
 }

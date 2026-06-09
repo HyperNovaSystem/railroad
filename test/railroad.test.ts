@@ -195,6 +195,29 @@ describe('determinism and persistence', () => {
     expect(play(11)).not.toBe(play(22))
   })
 
+  it('keeps simulating correctly after loading a save into a fresh boot', () => {
+    const a = createRailroad({ seed: 7, headless: true, idle: true })
+    connect(a, 'ashford', 'brightwater')
+    const storage = createMemoryStorage()
+    expect(save(a.world, storage, 'slot1').ok).toBe(true)
+
+    const b = createRailroad({ seed: 7, headless: true, idle: true })
+    expect(load(b.world, storage, 'slot1').ok).toBe(true)
+    // The cities system must find the restored stations (the lookup is derived
+    // from world state, not a boot-time closure) and keep feeding them.
+    b.advanceMonths(2)
+    const anyPax = b.stationIds().some((id) => {
+      const st = b.world.getComponent(id, Station)
+      return st !== undefined && st.paxQueue > 0
+    })
+    expect(anyPax).toBe(true)
+    // And building onward from a restored city must reuse its station.
+    const from = b.cityByKey.get('ashford') as Entity
+    const to = b.cityByKey.get('coalridge') as Entity
+    expect(b.command({ kind: 'build-line', from, to })).toBe(true)
+    expect(b.stationIds().length).toBe(3)
+  })
+
   it('round-trips through @domecs/persist with an identical hash', () => {
     const a = createRailroad({ seed: 7, headless: true, idle: true })
     const { line } = connect(a, 'ashford', 'brightwater')

@@ -40,6 +40,7 @@
       <button id="btn-save" class="ctrl" title="S">⤓ Save</button>
       <button id="btn-load" class="ctrl" title="L">⤒ Load</button>
       <button id="btn-build" class="ctrl" title="B">⛏ Build mode: off</button>
+      <button id="btn-tutorial" class="ctrl" title="T">🎓 Tutorial</button>
       <span id="status" class="status"></span>
     </div>
 
@@ -50,6 +51,8 @@
         <div id="layer-stations" class="layer"></div>
         <div id="layer-cities" class="layer"></div>
         <div id="layer-trains" class="layer"></div>
+        <!-- Tutorial checklist overlay; driven from src/tutorial.ts state. -->
+        <aside id="tutorial" class="tutorial" hidden></aside>
       </section>
 
       <!-- ── Right rail: tabbed command panels + live fault stream. ── -->

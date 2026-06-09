@@ -42,6 +42,22 @@ export function distanceKm(ax: number, ay: number, bx: number, by: number): numb
   return Math.round(Math.hypot(bx - ax, by - ay))
 }
 
+/**
+ * Speed multiplier from track condition: pristine track (100) runs at full
+ * speed, fully worn track (0) at half. Linear in between, so neglecting
+ * maintenance is a steady drag rather than a cliff.
+ */
+export function conditionSpeedFactor(condition: number): number {
+  const c = condition < 0 ? 0 : condition > 100 ? 100 : condition
+  return 0.5 + c / 200
+}
+
+/** Cost to restore a line to condition 100, proportional to the wear deficit. */
+export function lineMaintainCost(length: number, condition: number): number {
+  const deficit = Math.max(0, 100 - condition) / 100
+  return Math.round(length * ECONOMY.maintainPerKmFull * deficit)
+}
+
 /** Pick the credit tier (rating + interest) for a debt/cash position. */
 export function creditTierFor(debt: number, cash: number): { rating: CreditRating; rate: number } {
   if (debt <= 0) return { rating: 'AAA', rate: CREDIT_LADDER[0]!.rate }

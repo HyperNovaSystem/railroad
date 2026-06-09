@@ -50,12 +50,14 @@ export const ECONOMY = Object.freeze({
   stationUpgradeBase: 12_000, // $ × level to raise a station
   farePerPax: 9, // base $ per passenger delivered
   freightPerUnit: 6, // base $ per freight unit delivered
-  loanMaxRatio: 4, // max debt as a multiple of monthly-ish capacity proxy
+  loanCeiling: 500_000, // absolute borrowing limit across all loans
   bankruptcyFloor: -50_000, // cash below this with debt ⇒ bankrupt
   conditionDecayPerMonth: 0.4, // line wear
   maintenancePerKm: 1.2, // $/km/month track upkeep
+  maintainPerKmFull: 30, // $/km to restore a line from condition 0 to 100
   researchPerMonthBase: 12,
   legacyPerYear: 4, // legacy score accrual baseline
+  retirementLegacy: 750, // legacy score at which the dynasty retires in glory
 })
 
 /** Cost multiplier to *build* a line at a non-standard grade. */

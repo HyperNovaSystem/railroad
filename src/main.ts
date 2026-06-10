@@ -3,16 +3,13 @@
 //   @domecs/dom      — declarative views paint the map board (4 slots)
 //   @domecs/input    — keyboard hotkeys, polled from world.input each tick
 //   @domecs/inspector— the live service-fault stream feeds the fault panel
-//   @domecs/persist   — save/load to a hand-rolled localStorage Storage adapter
+//   @domecs/persist   — save/load via the engine's localStorage Storage adapter
 // Everything outside the board (HUD, command panels) is imperative DOM, driven
 // off world.signals.tickEnd and refreshed after each dispatched Command.
 
 import {
   Faulted,
-  err,
   isErr,
-  normalizeCause,
-  ok,
   type DomecsError,
   type Entity,
   type Result,
@@ -20,7 +17,7 @@ import {
 import { defineView, mountDOM } from '@domecs/dom'
 import { createInputPlugin } from '@domecs/input'
 import { createInspector, type InspectorEntry } from '@domecs/inspector'
-import { load, save, type Storage } from '@domecs/persist'
+import { createLocalStorageStorage, load, save } from '@domecs/persist'
 import {
   City,
   GRADE_ORDER,
@@ -70,51 +67,9 @@ function warnIf(r: Result<unknown, DomecsError>, label: string): void {
 }
 
 // ── @domecs/persist — localStorage-backed Storage adapter ───────────────────
-// persist ships only createMemoryStorage(); a browser-durable adapter is left
-// to the app. Each op catches at the I/O boundary and returns persist_io.
-function createLocalStorage(prefix = 'iron-dynasty:'): Storage {
-  const k = (slot: string): string => prefix + slot
-  const ioErr = (op: 'save' | 'load', cause: unknown): Result<never, DomecsError> =>
-    err({ kind: 'persist_io', op, cause: normalizeCause(cause), retryable: false })
-  return {
-    read(slot) {
-      try {
-        return ok(localStorage.getItem(k(slot)))
-      } catch (cause) {
-        return ioErr('load', cause)
-      }
-    },
-    write(slot, data) {
-      try {
-        localStorage.setItem(k(slot), data)
-        return ok(undefined)
-      } catch (cause) {
-        return ioErr('save', cause)
-      }
-    },
-    remove(slot) {
-      try {
-        localStorage.removeItem(k(slot))
-        return ok(undefined)
-      } catch (cause) {
-        return ioErr('save', cause)
-      }
-    },
-    list() {
-      try {
-        const out: string[] = []
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i)
-          if (key && key.startsWith(prefix)) out.push(key.slice(prefix.length))
-        }
-        return ok(out.sort())
-      } catch (cause) {
-        return ioErr('load', cause)
-      }
-    },
-  }
-}
-const storage = createLocalStorage()
+// The engine ships createLocalStorageStorage(); the explicit 'iron-dynasty:'
+// prefix (engine default is 'domecs:') keeps existing browser saves readable.
+const storage = createLocalStorageStorage('iron-dynasty:')
 
 // ── Map board views (@domecs/dom) ────────────────────────────────────────────
 let buildMode = false

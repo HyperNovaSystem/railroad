@@ -31,6 +31,7 @@ import {
   createRailroad,
   effectiveSpeedKm,
   gradeRank,
+  lineMaintainCost,
   trainModel,
   type Command,
   type Good,
@@ -38,6 +39,7 @@ import {
   type PolicyId,
   type TechId,
   type TrainModelId,
+  tutorialProgress,
 } from './index.js'
 
 // ── DOM helpers ────────────────────────────────────────────────────────────
@@ -69,6 +71,7 @@ function warnIf(r: Result<unknown, DomecsError>, label: string): void {
 // ── @domecs/persist — localStorage-backed Storage adapter ───────────────────
 // The engine ships createLocalStorageStorage(); the explicit 'iron-dynasty:'
 // prefix (engine default is 'domecs:') keeps existing browser saves readable.
+// The adapter maps quota/privacy-mode throws to persist_io Results.
 const storage = createLocalStorageStorage('iron-dynasty:')
 
 // ── Map board views (@domecs/dom) ────────────────────────────────────────────
@@ -249,6 +252,8 @@ function describe(cmd: Command): string {
       return `Upgraded a station.`
     case 'upgrade-line':
       return `Upgraded line to ${cmd.grade}.`
+    case 'maintain-line':
+      return `Overhauled ${lineLabel(cmd.line)}.`
     case 'set-fares':
       return `Set fares ×${cmd.fareMult.toFixed(2)} / freight ×${cmd.freightMult.toFixed(2)}.`
     case 'enact-policy':
@@ -316,6 +321,20 @@ function doLoad(): void {
   refreshAll()
 }
 
+// ── Undo / redo (exercises @domecs/persist createSnapshotHistory) ───────────
+// A checkpoint is pushed after every accepted command, so undo rewinds to
+// just before the last action — including any months simulated since.
+function doUndo(): void {
+  if (REFS.history.undo()) setStatus('Rewound to before the last action.', 'ok')
+  else setStatus('Nothing to undo.', 'err')
+  refreshAll()
+}
+function doRedo(): void {
+  if (REFS.history.redo()) setStatus('Replayed the next action.', 'ok')
+  else setStatus('Nothing to redo.', 'err')
+  refreshAll()
+}
+
 // ── HUD + fault panel refresh ────────────────────────────────────────────────
 function refreshHud(): void {
   const t = REFS.treasury()
@@ -330,6 +349,8 @@ function refreshHud(): void {
   $('hud-reg').textContent = String(Math.round(t.regulation))
   $('hud-dynasty').textContent = `Gen ${t.generation} · ${t.heirTrait}`
   $('hud-legacy').textContent = String(Math.round(t.legacyScore))
+  ;($('btn-undo') as HTMLButtonElement).disabled = !REFS.history.canUndo()
+  ;($('btn-redo') as HTMLButtonElement).disabled = !REFS.history.canRedo()
   if (t.status !== 'playing') {
     $('hud-clock').textContent += t.status === 'bankrupt' ? ' · BANKRUPT' : ' · RETIRED'
   }
@@ -371,17 +392,38 @@ for (const tab of document.querySelectorAll<HTMLElement>('.tab')) {
 
 function renderPanel(): void {
   const host = $('tab-content')
+  // Re-renders rebuild innerHTML wholesale; carry over in-progress <select>
+  // and <input> choices so the periodic repaint doesn't clobber a half-made
+  // selection (e.g. picking a model while the clock runs).
+  const kept = new Map<string, string>()
+  for (const el of host.querySelectorAll<HTMLSelectElement | HTMLInputElement>(
+    'select[id], input[id]',
+  ))
+    kept.set(el.id, el.value)
   switch (activeTab) {
     case 'build':
-      return renderBuild(host)
+      renderBuild(host)
+      break
     case 'trains':
-      return renderTrains(host)
+      renderTrains(host)
+      break
     case 'tech':
-      return renderTech(host)
+      renderTech(host)
+      break
     case 'politics':
-      return renderPolitics(host)
+      renderPolitics(host)
+      break
     case 'log':
-      return renderLog(host)
+      renderLog(host)
+      break
+  }
+  for (const [id, value] of kept) {
+    const el = document.getElementById(id)
+    if (el instanceof HTMLSelectElement) {
+      if ([...el.options].some((o) => o.value === value)) el.value = value
+    } else if (el instanceof HTMLInputElement) {
+      el.value = value
+    }
   }
 }
 
@@ -409,18 +451,38 @@ function renderBuild(host: HTMLElement): void {
         .join('')}</select>
       <button class="btn sm" id="p-station-up" ${stations.length ? '' : 'disabled'}>Upgrade</button>
     </div>
-    <h3>Upgrade line</h3>
+    <h3>Lines</h3>
+    <p class="hint">Track wears 0.4%/month and worn track slows trains (down to half speed at 0%).</p>
     <div class="row">
       <select id="p-line">${lines
-        .map((id) => `<option value="${id}">${lineLabel(id)} (${world.getComponent(id, RailLine)?.grade})</option>`)
+        .map((id) => {
+          const ln = world.getComponent(id, RailLine)
+          return `<option value="${id}">${lineLabel(id)} (${ln?.grade}, ${Math.round(
+            ln?.condition ?? 100,
+          )}%)</option>`
+        })
         .join('')}</select>
     </div>
     <div class="row">
       <select id="p-grade">${grades.map((g) => `<option value="${g}">${g}</option>`).join('')}</select>
       <button class="btn sm" id="p-line-up" ${lines.length ? '' : 'disabled'}>Upgrade grade</button>
+      <button class="btn sm ghost" id="p-line-fix" ${lines.length ? '' : 'disabled'}></button>
     </div>`
 
   $('p-build-toggle').addEventListener('click', () => setBuildMode(!buildMode))
+  const fixLabel = (): void => {
+    const ln = world.getComponent(Number(selVal('p-line')) as Entity, RailLine)
+    const cost = ln ? lineMaintainCost(ln.length, ln.condition) : 0
+    $('p-line-fix').textContent = cost > 0 ? `Maintain (${fmtMoney(cost)})` : 'Maintain'
+  }
+  if (lines.length) {
+    fixLabel()
+    $('p-line').addEventListener('change', fixLabel)
+    $('p-line-fix').addEventListener('click', () => {
+      const line = Number(selVal('p-line'))
+      if (Number.isFinite(line)) dispatch({ kind: 'maintain-line', line })
+    })
+  }
   $('p-station-up').addEventListener('click', () => {
     const station = Number(selVal('p-station'))
     if (Number.isFinite(station)) dispatch({ kind: 'upgrade-station', station })
@@ -586,6 +648,62 @@ function renderLog(host: HTMLElement): void {
   }</div>`
 }
 
+// ── Tutorial mode ────────────────────────────────────────────────────────────
+// A state-driven checklist overlaid on the board. Step predicates live in
+// tutorial.ts (pure, headless-tested); this block only paints and handles
+// visibility. Shown on first visit; dismissal sticks via localStorage.
+const TUTORIAL_KEY = 'iron-dynasty:tutorial-dismissed'
+let tutorialOpen = ((): boolean => {
+  try {
+    return localStorage.getItem(TUTORIAL_KEY) === null
+  } catch {
+    return true
+  }
+})()
+function setTutorialDismissed(dismissed: boolean): void {
+  try {
+    if (dismissed) localStorage.setItem(TUTORIAL_KEY, '1')
+    else localStorage.removeItem(TUTORIAL_KEY)
+  } catch {
+    /* private mode: visibility just won't persist */
+  }
+}
+let lastTutorialHtml = ''
+function renderTutorial(): void {
+  const host = $('tutorial')
+  host.hidden = !tutorialOpen
+  if (!tutorialOpen) return
+  const p = tutorialProgress(REFS)
+  const rows = p.steps
+    .map(({ step, done }, i) => {
+      const cls = done ? 'done' : i === p.current ? 'current' : 'todo'
+      const mark = done ? '✓' : i === p.current ? '▸' : '○'
+      const how = i === p.current ? `<div class="tut-how">${escapeHtml(step.how)}</div>` : ''
+      return `<li class="${cls}"><span class="mark">${mark}</span>${escapeHtml(step.title)}${how}</li>`
+    })
+    .join('')
+  const foot = p.complete
+    ? '<p class="tut-done">Tutorial complete — the dynasty is yours.</p>'
+    : ''
+  const html = `<div class="tut-head"><h3>Getting started</h3>
+      <button class="tut-x" data-tut-action="close" title="Hide tutorial">×</button></div>
+    <ol class="tut-steps">${rows}</ol>${foot}`
+  if (html !== lastTutorialHtml) {
+    host.innerHTML = html
+    lastTutorialHtml = html
+  }
+}
+// Delegated click handling survives the innerHTML repaints above.
+$('tutorial').addEventListener('click', (ev) => {
+  if (!(ev.target as HTMLElement).closest('[data-tut-action]')) return
+  setTutorialOpen(false)
+})
+function setTutorialOpen(open: boolean): void {
+  tutorialOpen = open
+  setTutorialDismissed(!open)
+  renderTutorial()
+}
+
 // ── Small utilities ──────────────────────────────────────────────────────────
 function setBuildMode(on: boolean): void {
   buildMode = on
@@ -619,6 +737,7 @@ function refreshAll(): void {
   refreshHud()
   refreshFaults()
   renderPanel()
+  renderTutorial()
   lastPanelPaint = world.time.tick
 }
 
@@ -626,7 +745,10 @@ function refreshAll(): void {
 $('btn-pause').addEventListener('click', () => setPaused(!paused))
 $('btn-save').addEventListener('click', doSave)
 $('btn-load').addEventListener('click', doLoad)
+$('btn-undo').addEventListener('click', doUndo)
+$('btn-redo').addEventListener('click', doRedo)
 $('btn-build').addEventListener('click', () => setBuildMode(!buildMode))
+$('btn-tutorial').addEventListener('click', () => setTutorialOpen(!tutorialOpen))
 for (const b of document.querySelectorAll<HTMLElement>('.spd'))
   b.addEventListener('click', () => setSpeed(Number(b.dataset.scale)))
 
@@ -635,10 +757,22 @@ for (const b of document.querySelectorAll<HTMLElement>('.spd'))
 world.signals.tickStart.subscribe(() => {
   const pressed = world.input.keyDelta.pressed
   if (pressed.size === 0) return
+  // Don't steal keys while the player is typing in a form control
+  // (e.g. digits in the loan-amount field would change the game speed).
+  const focus = document.activeElement
+  if (
+    focus instanceof HTMLInputElement ||
+    focus instanceof HTMLSelectElement ||
+    focus instanceof HTMLTextAreaElement
+  )
+    return
   if (pressed.has('Space')) setPaused(!paused)
   if (pressed.has('KeyB')) setBuildMode(!buildMode)
   if (pressed.has('KeyS')) doSave()
   if (pressed.has('KeyL')) doLoad()
+  if (pressed.has('KeyT')) setTutorialOpen(!tutorialOpen)
+  if (pressed.has('KeyZ')) doUndo()
+  if (pressed.has('KeyY')) doRedo()
   if (pressed.has('Escape') && buildOrigin !== null) {
     markOrigin(buildOrigin, false)
     buildOrigin = null
@@ -663,6 +797,7 @@ function bumpSpeed(dir: number): void {
 world.signals.tickEnd.subscribe(() => {
   refreshHud()
   refreshFaults()
+  renderTutorial() // diffed against the last paint; no-op unless a step flips
   if (activeTab !== 'politics' && world.time.tick - lastPanelPaint >= 20) {
     renderPanel()
     lastPanelPaint = world.time.tick
@@ -675,4 +810,5 @@ world.setScale(0) // start paused
 renderPanel()
 refreshHud()
 refreshFaults()
+renderTutorial()
 setStatus('Welcome to Iron Dynasty. Build a line (B), buy a train, then Resume.')

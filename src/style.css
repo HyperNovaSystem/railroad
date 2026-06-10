@@ -197,3 +197,26 @@ input[type='range'] { accent-color: var(--accent); }
 #fault-list { list-style: none; margin: 0; padding: 0; font-size: 11px; }
 #fault-list li { padding: 3px 0; color: var(--bad); border-bottom: 1px solid #ffffff08; }
 #fault-list li.muted { color: var(--muted); }
+
+/* ── Tutorial overlay ──────────────────────────────────────────────────── */
+.tutorial {
+  position: absolute; top: 12px; left: 12px; z-index: 5; width: 250px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  font-size: 12px; pointer-events: auto;
+}
+.tut-head { display: flex; justify-content: space-between; align-items: baseline; }
+.tut-head h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; color: var(--muted); letter-spacing: .5px; }
+.tut-x {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+}
+.tut-x:hover { color: var(--ink); }
+.tut-steps { list-style: none; margin: 0; padding: 0; }
+.tut-steps li { padding: 4px 0; border-bottom: 1px solid #ffffff08; color: var(--muted); }
+.tut-steps li:last-child { border-bottom: none; }
+.tut-steps li .mark { display: inline-block; width: 14px; }
+.tut-steps li.done { color: var(--good); }
+.tut-steps li.current { color: var(--ink); font-weight: 600; }
+.tut-how { font-weight: 400; color: var(--muted); margin: 3px 0 2px 14px; }
+.tut-done { color: var(--good); margin: 8px 0 2px; font-weight: 600; }

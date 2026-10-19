@@ -1,0 +1,83 @@
+# Deploy Iron Dynasty to GitHub Pages.
+# Site: https://hypernovasystem.github.io/railroad/
+#
+# package.json links @domecs/* with file:../domecs/..., so the job rebuilds
+# the local sibling layout: this repo in ./app, the engine in ./domecs.
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# cancel-in-progress stays false per the official Pages pattern: in-flight
+# production deployments complete; queued runs are still skipped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  # domecs tag the @domecs/* file: deps are built against. Bump deliberately.
+  DOMECS_REF: v2.0.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          path: app
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          repository: HyperNovaSystem/domecs
+          ref: ${{ env.DOMECS_REF }}
+          path: domecs
+
+      # Reads the "packageManager" field from domecs/package.json.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320  # v4.4.0
+        with:
+          package_json_file: domecs/package.json
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020  # v4.4.0
+        with:
+          node-version: 22
+
+      # The linked packages import each other via workspace:* deps, which only
+      # resolve once the domecs workspace itself is installed.
+      - name: Install domecs workspace
+        working-directory: domecs
+        run: pnpm install --frozen-lockfile
+
+      - name: Install app
+        working-directory: app
+        run: npm ci
+
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b  # v5.0.0
+
+      # vite.config.ts sets base: './' for the /<repo>/ subpath.
+      - name: Build
+        working-directory: app
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3.0.1
+        with:
+          path: app/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4.0.5
